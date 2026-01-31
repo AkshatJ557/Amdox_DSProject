@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Run script for Amdox Backend Server
+Run script for Amdox Backend Server hehe
 """
 import uvicorn
 import sys
