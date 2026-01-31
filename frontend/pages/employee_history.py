@@ -1,122 +1,270 @@
 """
-Employee History Page - View past emotion detection records
+Enhanced Employee History Page for Amdox
+View past sessions, emotion timeline, and historical data
 """
 import streamlit as st
+import requests
 import pandas as pd
 from datetime import datetime, timedelta
-
-# Add parent directories to path
 import sys
 import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-pages_dir = os.path.dirname(current_dir)
-components_dir = os.path.dirname(pages_dir)
-app_dir = os.path.dirname(components_dir)
-root_dir = os.path.dirname(app_dir)
 
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
+# Add components to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'components'))
 
-from frontend.session import session_manager
+from navbar import render_navbar, render_sidebar_navigation, render_page_header
+from charts import (
+    create_emotion_timeline,
+    create_emotion_bar_chart,
+    create_stress_trend_chart,
+    create_box_plot
+)
+
+# API Configuration
+API_BASE_URL = "http://localhost:8080"
 
 
-def employee_history():
-    """Display employee history page"""
+def fetch_user_history(user_id: str, days: int = 30):
+    """Fetch user historical data"""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/analytics/user/{user_id}",
+            params={"days": days},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("success"):
+                return result
+        return None
+        
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
+        return None
+
+
+def render_session_history(user_id: str):
+    """Render past sessions table"""
+    st.markdown("### 📋 Session History")
+    
+    history = fetch_user_history(user_id, days=30)
+    
+    if history and history.get('sessions'):
+        sessions = history['sessions']
+        
+        # Create DataFrame
+        df_sessions = pd.DataFrame(sessions)
+        
+        # Format columns
+        if 'timestamp' in df_sessions.columns:
+            df_sessions['timestamp'] = pd.to_datetime(df_sessions['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+        
+        # Display table
+        st.dataframe(
+            df_sessions[[
+                'session_id', 'timestamp', 'dominant_emotion',
+                'avg_stress', 'detection_count'
+            ]].rename(columns={
+                'session_id': 'Session ID',
+                'timestamp': 'Date & Time',
+                'dominant_emotion': 'Dominant Emotion',
+                'avg_stress': 'Avg Stress',
+                'detection_count': 'Detections'
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Download button
+        csv = df_sessions.to_csv(index=False)
+        st.download_button(
+            "📥 Download CSV",
+            csv,
+            "session_history.csv",
+            "text/csv"
+        )
+    else:
+        st.info("ℹ️ No session history available")
+
+
+def render_emotion_timeline_section(user_id: str, days: int):
+    """Render emotion timeline"""
+    st.markdown(f"### 📅 Emotion Timeline (Last {days} Days)")
+    
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/stress/history/{user_id}",
+            params={"limit": 100},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            if result.get("success"):
+                history = result.get('history', [])
+                
+                if history:
+                    # Prepare data for timeline
+                    timeline_data = [
+                        {
+                            'timestamp': entry['timestamp'],
+                            'emotion': entry.get('dominant_emotion', 'Unknown')
+                        }
+                        for entry in history
+                    ]
+                    
+                    st.plotly_chart(
+                        create_emotion_timeline(timeline_data),
+                        use_container_width=True
+                    )
+                else:
+                    st.info("ℹ️ No timeline data available")
+    except Exception as e:
+        st.error(f"❌ Error loading timeline: {e}")
+
+
+def render_statistics_summary(user_id: str, days: int):
+    """Render statistics summary"""
+    st.markdown(f"### 📊 Statistics Summary (Last {days} Days)")
+    
+    history = fetch_user_history(user_id, days=days)
+    
+    if history:
+        stats = history.get('statistics', {})
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_sessions = stats.get('total_sessions', 0)
+            st.metric("Total Sessions", total_sessions)
+        
+        with col2:
+            total_detections = stats.get('total_detections', 0)
+            st.metric("Total Detections", total_detections)
+        
+        with col3:
+            avg_stress = stats.get('avg_stress', 0)
+            st.metric("Average Stress", f"{avg_stress:.1f}/10")
+        
+        with col4:
+            wellness = stats.get('wellness_score', 0)
+            st.metric("Wellness Score", f"{wellness}/100")
+
+
+def render_detailed_analysis(user_id: str, days: int):
+    """Render detailed analysis charts"""
+    st.markdown("### 🔍 Detailed Analysis")
+    
+    tab1, tab2, tab3 = st.tabs(["Emotion Distribution", "Stress Trends", "Patterns"])
+    
+    with tab1:
+        history = fetch_user_history(user_id, days=days)
+        
+        if history and history.get('emotion_distribution'):
+            st.plotly_chart(
+                create_emotion_bar_chart(history['emotion_distribution']),
+                use_container_width=True
+            )
+    
+    with tab2:
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/stress/trend/{user_id}",
+                params={"days": days, "granularity": "daily"},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                if result.get("success"):
+                    trend_data = result.get('trend_data', [])
+                    
+                    if trend_data:
+                        st.plotly_chart(
+                            create_stress_trend_chart(
+                                trend_data,
+                                'timestamp',
+                                'avg_stress'
+                            ),
+                            use_container_width=True
+                        )
+        except:
+            st.info("ℹ️ Could not load stress trends")
+    
+    with tab3:
+        st.info("📊 Pattern analysis coming soon!")
+
+
+def main():
+    """Main employee history page"""
     st.set_page_config(
-        page_title="History - Amdox",
+        page_title="Employee History - Amdox",
         page_icon="📜",
         layout="wide"
     )
     
-    # Check authentication
-    if not session_manager.is_logged_in():
-        st.warning("Please log in to view your history")
-        st.switch_page("frontend.pages.login")
+    # Check login
+    if 'user_id' not in st.session_state:
+        st.warning("⚠️ Please log in first")
         return
     
-    st.title("📜 Emotion Detection History")
-    st.markdown(f"Showing records for **{session_manager.get_user_id()}**")
+    user_id = st.session_state.get('user_id')
+    user_name = st.session_state.get('user_name', 'Employee')
     
-    # Filters
-    col1, col2, col3 = st.columns([2, 2, 1])
+    # Navbar
+    render_navbar(user_id, user_name)
+    
+    # Sidebar
+    selected_page = render_sidebar_navigation()
+    
+    if selected_page != "dashboard":
+        st.session_state.page = selected_page
+        st.rerun()
+    
+    # Header
+    render_page_header(
+        "History & Analytics",
+        "View your past sessions and trends",
+        "📜"
+    )
+    
+    # Time range selector
+    col1, col2 = st.columns([3, 1])
     
     with col1:
-        date_filter = st.date_input(
-            "Date Range",
-            value=(datetime.now() - timedelta(days=7), datetime.now())
+        st.markdown("### 📅 Select Time Range")
+    
+    with col2:
+        days = st.selectbox(
+            "Period",
+            options=[7, 14, 30, 60, 90],
+            format_func=lambda x: f"Last {x} days",
+            index=2
         )
     
-    with col2:
-        emotion_filter = st.multiselect(
-            "Filter by Emotion",
-            ['Happy', 'Neutral', 'Sad', 'Angry', 'Fear', 'Surprise', 'Disgust']
-        )
-    
-    with col3:
-        if st.button("🔄 Refresh"):
-            st.rerun()
-    
-    # Sample history data
     st.markdown("---")
     
-    # Create sample data
-    history_data = [
-        {"Date": "2024-01-15 14:30", "Emotion": "Happy 😊", "Stress": 2, "Confidence": 0.95},
-        {"Date": "2024-01-15 10:15", "Emotion": "Neutral 😐", "Stress": 4, "Confidence": 0.88},
-        {"Date": "2024-01-14 16:45", "Emotion": "Sad 😢", "Stress": 6, "Confidence": 0.92},
-        {"Date": "2024-01-14 09:00", "Emotion": "Happy 😊", "Stress": 1, "Confidence": 0.97},
-        {"Date": "2024-01-13 15:30", "Emotion": "Angry 😠", "Stress": 8, "Confidence": 0.89},
-        {"Date": "2024-01-13 11:00", "Emotion": "Neutral 😐", "Stress": 4, "Confidence": 0.91},
-        {"Date": "2024-01-12 14:00", "Emotion": "Fear 😨", "Stress": 7, "Confidence": 0.85},
-    ]
+    # Statistics summary
+    render_statistics_summary(user_id, days)
     
-    df = pd.DataFrame(history_data)
-    
-    # Apply filters
-    if emotion_filter:
-        emotions_only = [e.split()[0] for e in emotion_filter]
-        df = df[df['Emotion'].apply(lambda x: x.split()[0] in emotions_only)]
-    
-    # Display data
-    st.dataframe(df, use_container_width=True)
-    
-    # Statistics
-    st.markdown("---")
-    st.subheader("📊 Statistics")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Detections", len(df))
-    
-    with col2:
-        avg_stress = df['Stress'].mean()
-        st.metric("Avg Stress Level", f"{avg_stress:.1f}/10")
-    
-    with col3:
-        dominant = df['Emotion'].apply(lambda x: x.split()[0]).mode()[0]
-        st.metric("Most Common Emotion", dominant)
-    
-    with col4:
-        avg_conf = df['Confidence'].mean() * 100
-        st.metric("Avg Confidence", f"{avg_conf:.1f}%")
-    
-    # Charts
     st.markdown("---")
     
-    col1, col2 = st.columns(2)
+    # Session history
+    render_session_history(user_id)
     
-    with col1:
-        st.subheader("Emotion Distribution")
-        emotion_counts = df['Emotion'].apply(lambda x: x.split()[0]).value_counts()
-        st.bar_chart(emotion_counts)
+    st.markdown("---")
     
-    with col2:
-        st.subheader("Stress Over Time")
-        stress_over_time = df.set_index('Date')['Stress']
-        st.line_chart(stress_over_time)
+    # Emotion timeline
+    render_emotion_timeline_section(user_id, days)
+    
+    st.markdown("---")
+    
+    # Detailed analysis
+    render_detailed_analysis(user_id, days)
 
 
 if __name__ == "__main__":
-    employee_history()
-
+    main()

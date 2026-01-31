@@ -1,16 +1,16 @@
 """
-FastAPI Server for Amdox Emotion Detection System
+Enhanced FastAPI Application for Amdox
+Production-grade REST API with comprehensive endpoints and validation
 """
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Any
-import uvicorn
-import os
-import sys
+from pydantic import BaseModel, Field, validator
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 import logging
+import sys
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -19,765 +19,694 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add the parent directory to Python path to ensure imports work
+# Add parent directory to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Import backend modules with error handling
-BACKEND_IMPORTS_SUCCESSFUL = False
-APP_NAME = "Amdox Emotion Detection API"
-VERSION = "1.0.0"
+# Import controllers
+from backend.controllers.analytics_controller import analytics_controller
+from backend.controllers.emotion_controller import emotion_controller
+from backend.controllers.recommendation_controller import recommendation_controller
+from backend.controllers.stress_controller import stress_controller
 
-# Initialize FastAPI app
-app = FastAPI(
-    title=APP_NAME,
-    description="AI-powered employee emotion, stress, and task optimization system",
-    version=VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json"
+# Import database
+from backend.database.db import init_db, close_db, db_manager
+
+# Import config
+from backend.config import (
+    API_HOST,
+    API_PORT,
+    CORS_ORIGINS,
+    EMOTION_LABELS,
+    TASK_ZONES
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["*"]
-)
+# ============================================================================
+# PYDANTIC MODELS
+# ============================================================================
 
-# Try to import all backend components
-try:
-    from backend.config import (
-        APP_NAME as CONFIG_APP_NAME,
-        VERSION as CONFIG_VERSION,
-        EMOTION_LABELS,
-        STRESS_EMOTIONS,
-        SESSION_DURATION,
-        STRESS_THRESHOLD
-    )
-    APP_NAME = CONFIG_APP_NAME
-    VERSION = CONFIG_VERSION
-    
-    from backend.database.db import db_manager
-    from backend.database.user_repo import user_repo
-    from backend.database.mood_repo import mood_repo
-    from backend.database.team_repo import team_repo
-    
-    from backend.services.stress_service import stress_service
-    from backend.services.recommendation_service import recommendation_service
-    from backend.services.alert_service import alert_service
-    from backend.services.aggregation_service import aggregation_service
-    
-    from backend.controllers.emotion_controller import emotion_controller
-    from backend.controllers.stress_controller import stress_controller
-    from backend.controllers.recommendation_controller import recommendation_controller
-    from backend.controllers.analytics_controller import analytics_controller
-    
-    BACKEND_IMPORTS_SUCCESSFUL = True
-    logger.info("✅ All backend modules imported successfully")
-    
-except ImportError as e:
-    logger.warning(f"⚠️ Some imports failed: {e}")
-except Exception as e:
-    logger.error(f"❌ Error importing backend modules: {e}")
-
-# Pydantic models for request/response validation
-class HealthResponse(BaseModel):
-    status: str
-    service: str
-    timestamp: str
-    backend_loaded: bool
-    database_status: Optional[str] = None
-    version: str
-
-class UserLogin(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)
-
-class EmotionSessionRequest(BaseModel):
-    user_id: str = Field(..., min_length=1)
+class EmotionSessionStart(BaseModel):
+    user_id: str = Field(..., description="User ID")
+    duration_minutes: int = Field(20, ge=1, le=120, description="Session duration")
     session_data: Optional[Dict[str, Any]] = None
 
-class StressRequest(BaseModel):
-    dominant_emotion: str = Field(..., description="Dominant emotion from session")
-    user_id: str = Field(..., min_length=1)
-    previous_score: Optional[int] = Field(None, ge=0, le=10)
+class EmotionFrameProcess(BaseModel):
+    session_id: str = Field(..., description="Session ID")
+    frame_base64: Optional[str] = None
+    image_bytes: Optional[bytes] = None
 
-class TaskRecommendationRequest(BaseModel):
-    dominant_emotion: str = Field(..., description="Dominant emotion")
-    stress_score: Optional[int] = Field(None, ge=0, le=10, description="Current stress score (0-10)")
-    workload_level: Optional[int] = Field(None, ge=1, le=5, description="Workload level (1-5)")
-    deadline_pressure: Optional[int] = Field(None, ge=1, le=5, description="Deadline pressure (1-5)")
-    sleep_hours: Optional[float] = Field(None, ge=0, le=24, description="Hours of sleep")
-
-class FrameData(BaseModel):
+class SessionComplete(BaseModel):
     session_id: str
     user_id: str
-    frame_base64: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+    save_to_db: bool = True
 
-class AnalyticsRequest(BaseModel):
-    days: int = Field(30, ge=1, le=365)
+class StressCalculation(BaseModel):
+    dominant_emotion: str = Field(..., description="Detected emotion")
+    user_id: str
+    workload_level: Optional[int] = Field(None, ge=0, le=10)
+    deadline_pressure: Optional[int] = Field(None, ge=0, le=10)
+    working_hours: Optional[float] = Field(None, ge=0, le=24)
+    sleep_hours: Optional[float] = Field(None, ge=0, le=24)
+    
+    @validator('dominant_emotion')
+    def validate_emotion(cls, v):
+        if v not in EMOTION_LABELS:
+            raise ValueError(f"Invalid emotion. Must be one of: {EMOTION_LABELS}")
+        return v
+
+class RecommendationRequest(BaseModel):
+    dominant_emotion: str
+    stress_score: Optional[int] = Field(None, ge=0, le=10)
+    workload_level: Optional[int] = Field(None, ge=0, le=10)
+    deadline_pressure: Optional[int] = Field(None, ge=0, le=10)
+    sleep_hours: Optional[float] = Field(None, ge=0, le=24)
+    working_hours: Optional[float] = Field(None, ge=0, le=24)
+    time_of_day: Optional[str] = None
+    
+    @validator('dominant_emotion')
+    def validate_emotion(cls, v):
+        if v not in EMOTION_LABELS:
+            raise ValueError(f"Invalid emotion. Must be one of: {EMOTION_LABELS}")
+        return v
+
+class AlertCreate(BaseModel):
+    user_id: str
+    alert_type: str
+    severity: str = Field(..., regex="^(low|medium|high|critical)$")
+    message: str
+    metadata: Optional[Dict[str, Any]] = None
+
+class AlertAcknowledge(BaseModel):
+    alert_id: str
+    user_id: str
+    acknowledgement_note: Optional[str] = None
+
+class UserCreate(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    password: Optional[str] = None
+    role: str = Field("employee", regex="^(employee|manager|hr|admin)$")
     team_id: Optional[str] = None
 
-# ==================== HEALTH & STATUS ENDPOINTS ====================
-@app.get("/", response_model=Dict[str, Any], tags=["Root"])
+class TeamCreate(BaseModel):
+    team_id: str
+    name: str
+    manager_id: Optional[str] = None
+    members: Optional[List[str]] = []
+
+# ============================================================================
+# FASTAPI APP
+# ============================================================================
+
+app = FastAPI(
+    title="Amdox Emotion Detection API",
+    description="AI-Powered Task Optimizer with Emotion Detection and Stress Management",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# ============================================================================
+# MIDDLEWARE
+# ============================================================================
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS + ["*"],  # Allow all for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# STARTUP/SHUTDOWN
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup"""
+    logger.info("🚀 Starting Amdox API...")
+    try:
+        init_db()
+        logger.info("✅ API started successfully")
+    except Exception as e:
+        logger.error(f"❌ Startup error: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database on shutdown"""
+    logger.info("👋 Shutting down Amdox API...")
+    close_db()
+
+# ============================================================================
+# HEALTH & STATUS ENDPOINTS
+# ============================================================================
+
+@app.get("/", tags=["Health"])
 async def root():
-    """Root endpoint with API information"""
+    """Root endpoint"""
     return {
-        "service": APP_NAME,
-        "version": VERSION,
+        "message": "Amdox Emotion Detection API",
+        "version": "1.0.0",
         "status": "running",
-        "timestamp": datetime.utcnow().isoformat(),
-        "endpoints": {
-            "health": "/health",
-            "docs": "/docs",
-            "openapi": "/openapi.json",
-            "emotion": "/emotion/*",
-            "stress": "/stress/*",
-            "recommendation": "/recommend/*",
-            "analytics": "/analytics/*",
-            "database": "/db/*"
-        }
+        "docs": "/docs"
     }
 
-@app.get("/health", response_model=HealthResponse, tags=["Health"])
+@app.get("/health", tags=["Health"])
 async def health_check():
     """Health check endpoint"""
-    db_status = None
-    backend_status = "loaded" if BACKEND_IMPORTS_SUCCESSFUL else "not_loaded"
-    
-    if BACKEND_IMPORTS_SUCCESSFUL:
-        try:
-            db_manager.client.admin.command('ping')
-            db_status = "connected"
-        except Exception as e:
-            logger.error(f"Database connection error: {e}")
-            db_status = f"error: {str(e)[:100]}"
-    
-    return HealthResponse(
-        status="healthy" if BACKEND_IMPORTS_SUCCESSFUL else "degraded",
-        service="amdox_api",
-        timestamp=datetime.utcnow().isoformat(),
-        backend_loaded=BACKEND_IMPORTS_SUCCESSFUL,
-        database_status=db_status,
-        version=VERSION
-    )
-
-@app.get("/config", tags=["Configuration"])
-async def get_config():
-    """Get application configuration"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
+    try:
+        db_health = db_manager.health_check()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "database": db_health.get("status"),
+            "services": {
+                "emotion_detection": emotion_controller.model.loaded if emotion_controller.model else False,
+                "analytics": True,
+                "recommendations": True,
+                "stress_analysis": True,
+                "alerts": True
+            }
+        }
+    except Exception as e:
+        return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
+            content={"status": "unhealthy", "error": str(e)}
         )
-    
-    config = {
-        "app_name": APP_NAME,
-        "version": VERSION,
-        "emotion_labels": EMOTION_LABELS,
-        "stress_emotions": STRESS_EMOTIONS,
-        "session_duration": SESSION_DURATION,
-        "stress_threshold": STRESS_THRESHOLD
-    }
-    return config
 
-# ==================== EMOTION ENDPOINTS ====================
-@app.post("/emotion/session/start", tags=["Emotion"])
-async def start_emotion_session(request: EmotionSessionRequest):
+@app.get("/db/status", tags=["Database"])
+async def database_status():
+    """Get database status"""
+    try:
+        health = db_manager.health_check()
+        return health
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# EMOTION DETECTION ENDPOINTS
+# ============================================================================
+
+@app.post("/emotion/session/start", tags=["Emotion Detection"])
+async def start_emotion_session(data: EmotionSessionStart):
     """Start a new emotion detection session"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded. Please check server logs."
-        )
-    
     try:
         result = emotion_controller.start_emotion_session(
-            user_id=request.user_id,
-            session_data=request.session_data
+            user_id=data.user_id,
+            session_data=data.session_data,
+            duration_minutes=data.duration_minutes
         )
         
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.get("error", "Failed to start session")
-            )
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
         
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error starting emotion session: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/emotion/session/{session_id}", tags=["Emotion"])
+@app.get("/emotion/session/{session_id}/status", tags=["Emotion Detection"])
 async def get_session_status(session_id: str):
-    """Get status of an emotion session"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
+    """Get status of an emotion detection session"""
     try:
         result = emotion_controller.get_session_status(session_id)
         
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=result.get("error", "Session not found")
-            )
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
         
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting session status: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/emotion/session/{session_id}/complete", tags=["Emotion"])
-async def complete_session(session_id: str, user_id: str, context: Optional[Dict[str, Any]] = None):
-    """Complete an emotion session and get results"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
+@app.post("/emotion/session/{session_id}/pause", tags=["Emotion Detection"])
+async def pause_session(session_id: str, user_id: str = Body(..., embed=True)):
+    """Pause an active session"""
+    try:
+        result = emotion_controller.pause_session(session_id, user_id)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/emotion/session/{session_id}/resume", tags=["Emotion Detection"])
+async def resume_session(session_id: str, user_id: str = Body(..., embed=True)):
+    """Resume a paused session"""
+    try:
+        result = emotion_controller.resume_session(session_id, user_id)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/emotion/session/complete", tags=["Emotion Detection"])
+async def complete_session(data: SessionComplete):
+    """Complete an emotion detection session"""
     try:
         result = emotion_controller.complete_session(
-            session_id=session_id,
-            user_id=user_id,
-            context=context
+            session_id=data.session_id,
+            user_id=data.user_id,
+            context=data.context,
+            save_to_db=data.save_to_db
         )
         
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.get("error", "Failed to complete session")
-            )
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
         
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error completing session: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/emotion/validate", tags=["Emotion"])
-async def validate_emotion_system():
-    """Validate camera and emotion model"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        return {
-            "success": False,
-            "error": "Backend modules not loaded",
-            "camera": {"available": False, "status": "backend_not_loaded"},
-            "emotion_model": {"loaded": False}
-        }
-    
+@app.get("/emotion/validate_camera", tags=["Emotion Detection"])
+async def validate_camera():
+    """Validate camera and model availability"""
     try:
         result = emotion_controller.validate_camera()
         return result
     except Exception as e:
-        logger.error(f"Error validating emotion system: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ==================== STRESS ENDPOINTS ====================
-@app.post("/stress/calculate", tags=["Stress"])
-async def calculate_stress(request: StressRequest):
-    """Calculate stress score based on dominant emotion"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        return {
-            "success": True,
-            "user_id": request.user_id,
-            "dominant_emotion": request.dominant_emotion,
-            "stress_analysis": {
-                "stress_score": 2,
-                "stress_level": "Low",
-                "threshold_crossed": False,
-                "previous_score": request.previous_score or 0
-            },
-            "mock_data": True,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    
+@app.get("/emotion/session/{session_id}/statistics", tags=["Emotion Detection"])
+async def get_session_statistics(session_id: str):
+    """Get real-time statistics for a session"""
     try:
-        result = stress_controller.calculate_stress(
-            dominant_emotion=request.dominant_emotion,
-            user_id=request.user_id,
-            previous_score=request.previous_score
-        )
+        result = emotion_controller.get_session_statistics(session_id)
         
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.get("error", "Failed to calculate stress")
-            )
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
         
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error calculating stress: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/stress/history/{user_id}", tags=["Stress"])
-async def get_stress_history(user_id: str, limit: int = 20):
-    """Get stress history for user"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
-    try:
-        result = stress_controller.get_user_stress_history(user_id, limit)
-        
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=result.get("error", "User not found or no history available")
-            )
-        
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting stress history: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+# ============================================================================
+# STRESS CALCULATION ENDPOINTS
+# ============================================================================
 
-@app.get("/stress/trend/{user_id}", tags=["Stress"])
-async def get_stress_trend(user_id: str, days: int = 7):
-    """Get stress trend analysis for user"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
-    try:
-        result = stress_controller.get_stress_trend(user_id, days)
-        return result
-    except Exception as e:
-        logger.error(f"Error getting stress trend: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-@app.get("/stress/check-threshold", tags=["Stress"])
-async def check_stress_threshold(score: int, user_id: Optional[str] = None):
-    """Check if stress score crosses threshold"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        return {
-            "success": True,
-            "stress_score": score,
-            "threshold": 3,
-            "threshold_crossed": score >= 3,
-            "mock_data": True
-        }
-    
-    try:
-        result = stress_controller.check_stress_threshold(score, user_id)
-        return result
-    except Exception as e:
-        logger.error(f"Error checking stress threshold: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-# ==================== RECOMMENDATION ENDPOINTS ====================
-@app.post("/recommend/task", tags=["Recommendation"])
-async def recommend_task(request: TaskRecommendationRequest):
-    """Get task recommendation based on emotion and context"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        return {
-            "success": True,
-            "dominant_emotion": request.dominant_emotion,
-            "recommendation": {
-                "task": "Take a short break and reassess current work",
-                "category": "General",
-                "priority": "Medium",
-                "duration": "15-30 minutes",
-                "confidence_score": 0.7
-            },
-            "mock_data": True,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    
+@app.post("/stress/calculate", tags=["Stress Analysis"])
+async def calculate_stress(data: StressCalculation):
+    """Calculate stress score with context"""
     try:
         context = {}
-        if request.stress_score is not None:
-            context["stress_score"] = request.stress_score
-        if request.workload_level is not None:
-            context["workload_level"] = request.workload_level
-        if request.deadline_pressure is not None:
-            context["deadline_pressure"] = request.deadline_pressure
-        if request.sleep_hours is not None:
-            context["sleep_hours"] = request.sleep_hours
+        if data.workload_level is not None:
+            context["workload_level"] = data.workload_level
+        if data.deadline_pressure is not None:
+            context["deadline_pressure"] = data.deadline_pressure
+        if data.working_hours is not None:
+            context["working_hours"] = data.working_hours
+        if data.sleep_hours is not None:
+            context["sleep_hours"] = data.sleep_hours
+        
+        result = stress_controller.calculate_stress(
+            dominant_emotion=data.dominant_emotion,
+            user_id=data.user_id,
+            additional_factors=context if context else None
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stress/history/{user_id}", tags=["Stress Analysis"])
+async def get_stress_history(
+    user_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    include_analytics: bool = True
+):
+    """Get stress history for a user"""
+    try:
+        result = stress_controller.get_user_stress_history(
+            user_id=user_id,
+            limit=limit,
+            include_analytics=include_analytics
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stress/trend/{user_id}", tags=["Stress Analysis"])
+async def get_stress_trend(
+    user_id: str,
+    days: int = Query(7, ge=1, le=90),
+    granularity: str = Query("daily", regex="^(hourly|daily|weekly)$")
+):
+    """Get stress trend analysis"""
+    try:
+        result = stress_controller.get_stress_trend(
+            user_id=user_id,
+            days=days,
+            granularity=granularity
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stress/threshold", tags=["Stress Analysis"])
+async def check_stress_threshold(
+    score: int = Query(..., ge=0, le=10),
+    user_id: Optional[str] = None
+):
+    """Check stress threshold"""
+    try:
+        result = stress_controller.check_stress_threshold(
+            score=score,
+            user_id=user_id
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stress/recommendation", tags=["Stress Analysis"])
+async def get_stress_recommendation(
+    stress_score: int = Query(..., ge=0, le=10),
+    user_id: Optional[str] = None
+):
+    """Get stress management recommendations"""
+    try:
+        result = stress_controller.get_stress_recommendation(
+            stress_score=stress_score,
+            user_id=user_id
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# RECOMMENDATION ENDPOINTS
+# ============================================================================
+
+@app.post("/recommend/task", tags=["Recommendations"])
+async def recommend_task(data: RecommendationRequest):
+    """Get task recommendation based on emotion and context"""
+    try:
+        context = {}
+        if data.stress_score is not None:
+            context["stress_score"] = data.stress_score
+        if data.workload_level is not None:
+            context["workload_level"] = data.workload_level
+        if data.deadline_pressure is not None:
+            context["deadline_pressure"] = data.deadline_pressure
+        if data.sleep_hours is not None:
+            context["sleep_hours"] = data.sleep_hours
+        if data.working_hours is not None:
+            context["working_hours"] = data.working_hours
+        if data.time_of_day:
+            context["time_of_day"] = data.time_of_day
         
         result = recommendation_controller.recommend_task(
-            dominant_emotion=request.dominant_emotion,
+            dominant_emotion=data.dominant_emotion,
             context=context if context else None
         )
         
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.get("error", "Failed to generate recommendation")
-            )
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
         
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating recommendation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/recommend/multiple/{emotion}", tags=["Recommendation"])
-async def get_multiple_recommendations(emotion: str, count: int = 3):
-    """Get multiple task suggestions for an emotion"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        return {
-            "success": True,
-            "dominant_emotion": emotion,
-            "suggestions": [
-                {"task": "Take a short break", "category": "General", "priority": "Medium"},
-                {"task": "Review pending tasks", "category": "Administrative", "priority": "Low"},
-                {"task": "Organize workspace", "category": "Productivity", "priority": "Low"}
-            ][:count],
-            "mock_data": True
-        }
-    
+@app.get("/recommend/multiple/{emotion}", tags=["Recommendations"])
+async def get_multiple_recommendations(
+    emotion: str,
+    count: int = Query(3, ge=1, le=10)
+):
+    """Get multiple task recommendations"""
     try:
+        if emotion not in EMOTION_LABELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid emotion. Must be one of: {EMOTION_LABELS}"
+            )
+        
         result = recommendation_controller.get_multiple_recommendations(
             dominant_emotion=emotion,
             count=count
         )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting multiple recommendations: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/recommend/tasks-by-emotion", tags=["Recommendation"])
-async def get_emotion_based_tasks():
-    """Get all available tasks organized by emotion"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        return {
-            "success": True,
-            "emotion_task_mapping": {
-                "Happy": {"category": "Creative", "tasks": ["Creative work"]},
-                "Neutral": {"category": "General", "tasks": ["Routine tasks"]}
-            },
-            "mock_data": True
-        }
-    
+@app.get("/recommend/tasks", tags=["Recommendations"])
+async def get_emotion_based_tasks(include_examples: bool = True):
+    """Get all tasks organized by emotion"""
     try:
-        result = recommendation_controller.get_emotion_based_tasks()
-        return result
-    except Exception as e:
-        logger.error(f"Error getting emotion-based tasks: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+        result = recommendation_controller.get_emotion_based_tasks(
+            include_examples=include_examples
         )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ==================== ANALYTICS ENDPOINTS ====================
+@app.get("/recommend/zone/{zone}", tags=["Recommendations"])
+async def get_zone_tasks(
+    zone: str,
+    count: int = Query(5, ge=1, le=20)
+):
+    """Get tasks for a specific zone"""
+    try:
+        if zone.upper() not in TASK_ZONES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid zone. Must be one of: {list(TASK_ZONES.keys())}"
+            )
+        
+        result = recommendation_controller.get_zone_recommendations(
+            zone=zone,
+            count=count
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# ANALYTICS ENDPOINTS
+# ============================================================================
+
 @app.get("/analytics/dashboard", tags=["Analytics"])
-async def get_dashboard_analytics():
-    """Get dashboard analytics"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
+async def get_dashboard_analytics(use_cache: bool = True):
+    """Get comprehensive dashboard analytics"""
     try:
-        result = analytics_controller.get_dashboard_analytics()
+        result = analytics_controller.get_dashboard_analytics(use_cache=use_cache)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error"))
+        
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting dashboard analytics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analytics/emotion", tags=["Analytics"])
-async def get_emotion_analytics(days: int = 30, team_id: Optional[str] = None):
+async def get_emotion_analytics(
+    days: int = Query(30, ge=1, le=365),
+    team_id: Optional[str] = None
+):
     """Get emotion analytics report"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
     try:
         result = analytics_controller.get_emotion_analytics_report(
             days=days,
             team_id=team_id
         )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting emotion analytics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analytics/stress", tags=["Analytics"])
-async def get_stress_analytics(days: int = 30, team_id: Optional[str] = None):
+async def get_stress_analytics(
+    days: int = Query(30, ge=1, le=365),
+    team_id: Optional[str] = None
+):
     """Get stress analytics report"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
     try:
         result = analytics_controller.get_stress_analytics_report(
             days=days,
             team_id=team_id
         )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
+        
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting stress analytics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analytics/user/{user_id}", tags=["Analytics"])
-async def get_user_analytics(user_id: str, days: int = 30):
+async def get_user_activity_report(
+    user_id: str,
+    days: int = Query(30, ge=1, le=365)
+):
     """Get user activity report"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
     try:
-        result = analytics_controller.get_user_activity_report(user_id, days)
+        result = analytics_controller.get_user_activity_report(
+            user_id=user_id,
+            days=days
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting user analytics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ==================== DATABASE ENDPOINTS ====================
-@app.get("/db/collections", tags=["Database"])
-async def list_collections():
-    """List all collections in database"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
+@app.get("/analytics/team/{team_id}", tags=["Analytics"])
+async def get_team_report(
+    team_id: str,
+    days: int = Query(30, ge=1, le=365)
+):
+    """Get comprehensive team report"""
     try:
-        collections = db_manager.db.list_collection_names()
-        return {
-            "success": True,
-            "database": db_manager.db.name,
-            "collections": collections,
-            "count": len(collections),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error listing collections: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+        result = analytics_controller.get_team_report(
+            team_id=team_id,
+            days=days
         )
-
-@app.get("/db/health", tags=["Database"])
-async def database_health():
-    """Check database health"""
-    if not BACKEND_IMPORTS_SUCCESSFUL:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend modules not loaded"
-        )
-    
-    try:
-        result = db_manager.health_check()
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error checking database health: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ==================== TEST ENDPOINTS ====================
-@app.get("/test/backend", tags=["Testing"])
-async def test_backend():
-    """Test if backend modules are working"""
-    test_results = {
-        "backend_loaded": BACKEND_IMPORTS_SUCCESSFUL,
-        "timestamp": datetime.utcnow().isoformat(),
-        "components": {}
-    }
-    
-    if BACKEND_IMPORTS_SUCCESSFUL:
-        try:
-            db_manager.client.admin.command('ping')
-            test_results["components"]["database"] = {
-                "status": "✅ connected",
-                "database": db_manager.db.name
-            }
-        except Exception as e:
-            test_results["components"]["database"] = {
-                "status": f"❌ {str(e)[:100]}",
-                "error": str(e)
-            }
+@app.get("/analytics/trends/emotions", tags=["Analytics"])
+async def get_trending_emotions(days: int = Query(7, ge=1, le=90)):
+    """Get trending emotions"""
+    try:
+        result = analytics_controller.get_trending_emotions(days=days)
         
-        try:
-            test_stress = stress_service.calculate_stress_score("Neutral", "test_user")
-            test_results["components"]["stress_service"] = {
-                "status": "✅ working",
-                "test_score": test_stress.get("stress_score", "N/A")
-            }
-        except Exception as e:
-            test_results["components"]["stress_service"] = {
-                "status": f"❌ {str(e)[:100]}",
-                "error": str(e)
-            }
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error"))
         
-        try:
-            test_emotion = emotion_controller.start_emotion_session("test_user")
-            test_results["components"]["emotion_controller"] = {
-                "status": "✅ working",
-                "session_id": test_emotion.get("session_id", "N/A")
-            }
-        except Exception as e:
-            test_results["components"]["emotion_controller"] = {
-                "status": f"❌ {str(e)[:100]}",
-                "error": str(e)
-            }
-        
-        try:
-            test_recommendation = recommendation_service.recommend_task("Happy")
-            test_results["components"]["recommendation_service"] = {
-                "status": "✅ working",
-                "test_task": test_recommendation.get("task", "N/A")
-            }
-        except Exception as e:
-            test_results["components"]["recommendation_service"] = {
-                "status": f"❌ {str(e)[:100]}",
-                "error": str(e)
-            }
-    else:
-        test_results["components"] = {"message": "Backend modules not loaded"}
-    
-    return test_results
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ==================== ERROR HANDLERS ====================
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions"""
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "success": False,
             "error": exc.detail,
-            "status_code": exc.status_code,
-            "timestamp": datetime.utcnow().isoformat()
+            "status_code": exc.status_code
         }
     )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
+    """Handle all other exceptions"""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=500,
         content={
             "success": False,
             "error": "Internal server error",
-            "detail": str(exc) if BACKEND_IMPORTS_SUCCESSFUL else "Backend modules not loaded",
-            "status_code": 500,
-            "timestamp": datetime.utcnow().isoformat()
+            "detail": str(exc)
         }
     )
 
-# ==================== STARTUP & SHUTDOWN ====================
-@app.on_event("startup")
-async def startup_event():
-    """Initialize on startup"""
-    print("\n" + "="*60)
-    print("🚀 Starting Amdox Emotion Detection Backend Server")
-    print("="*60)
-    print(f"📡 API: http://localhost:8080")
-    print(f"📚 Documentation: http://localhost:8080/docs")
-    print(f"🏥 Health Check: http://localhost:8080/health")
-    print(f"🔧 Test Backend: http://localhost:8080/test/backend")
-    print("="*60)
-    
-    if BACKEND_IMPORTS_SUCCESSFUL:
-        try:
-            print("🔌 Initializing database connection...")
-            db_manager.connect()
-            print("✅ Database initialized successfully")
-        except Exception as e:
-            print(f"⚠️ Error during startup: {e}")
-    else:
-        print("⚠️ Running in limited mode - some backend modules not loaded")
-        print("💡 Check that all dependencies are installed and config files exist")
-    
-    print("✅ Server is ready to accept requests")
-    print("="*60)
+# ============================================================================
+# MAIN
+# ============================================================================
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    print("\n👋 Shutting down Amdox Backend Server...")
-    if BACKEND_IMPORTS_SUCCESSFUL:
-        try:
-            db_manager.close_connection()
-            print("✅ Database connection closed")
-        except:
-            pass
-    print("✅ Server shutdown complete")
-
-# ==================== MAIN EXECUTION ====================
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(
         "api:app",
-        host="0.0.0.0",
-        port=8080,
+        host=API_HOST,
+        port=API_PORT,
         reload=True,
-        log_level="info",
-        access_log=True
+        log_level="info"
     )
-

@@ -1,282 +1,462 @@
 """
-Employee Dashboard - Main dashboard for employees
+Enhanced Employee Dashboard for Amdox
+Main dashboard with real-time metrics and quick access
 """
 import streamlit as st
 import requests
-import os
-import pandas as pd
-import plotly.express as px
 from datetime import datetime, timedelta
-
-# Add parent directories to path
 import sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
-pages_dir = os.path.dirname(current_dir)
-components_dir = os.path.dirname(pages_dir)
-app_dir = os.path.dirname(components_dir)
-root_dir = os.path.dirname(app_dir)
+import os
 
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
-if app_dir not in sys.path:
-    sys.path.insert(0, app_dir)
+# Add components to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'components'))
 
-from frontend.session import session_manager, API_BASE_URL
-from frontend.components.camera import emotion_camera_input
-from frontend.components.charts import (
-    display_emotion_chart, 
-    display_stress_chart,
-    display_recommendation_card
+from navbar import render_navbar, render_sidebar_navigation, render_page_header
+from charts import (
+    create_emotion_pie_chart,
+    create_stress_trend_chart,
+    create_stress_gauge,
+    render_dashboard_metrics
 )
-from frontend.components.navbar import show_navbar
-from frontend.components.forms import stress_input_form, recommendation_request_form
+from forms import render_quick_check_in_form
+
+# API Configuration
+API_BASE_URL = "http://localhost:8080"
 
 
-def employee_dashboard():
-    """Display employee dashboard"""
-    st.set_page_config(
-        page_title="Employee Dashboard - Amdox",
-        page_icon="📊",
-        layout="wide"
-    )
+def fetch_user_activity(user_id: str, days: int = 7):
+    """
+    Fetch user activity report from API
     
-    # Check authentication
-    if not session_manager.is_logged_in():
-        st.warning("Please log in to access the dashboard")
-        st.switch_page("frontend.pages.login")
-        return
+    Args:
+        user_id: User ID
+        days: Number of days
     
-    # Show navigation
-    show_navbar("Employee Dashboard")
+    Returns:
+        dict: Activity report or None
+    """
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/analytics/user/{user_id}",
+            params={"days": days},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("success"):
+                return result
+        return None
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ API Error: {e}")
+        return None
+
+
+def render_welcome_section(user_name: str):
+    """
+    Render welcome section with greeting
     
-    # Main content
-    st.title("📊 Employee Dashboard")
-    st.markdown(f"Welcome back, **{session_manager.get_user_id()}**!")
+    Args:
+        user_name: User's name
+    """
+    current_hour = datetime.now().hour
     
-    # Quick actions
-    with st.expander("🎯 Quick Actions", expanded=True):
+    if current_hour < 12:
+        greeting = "Good Morning"
+        emoji = "🌅"
+    elif current_hour < 18:
+        greeting = "Good Afternoon"
+        emoji = "☀️"
+    else:
+        greeting = "Good Evening"
+        emoji = "🌙"
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown(f"## {emoji} {greeting}, {user_name}!")
+        st.caption(f"📅 {datetime.now().strftime('%A, %B %d, %Y')}")
+    
+    with col2:
+        if st.button("🎯 Quick Scan", use_container_width=True, type="primary"):
+            st.session_state.page = "detection"
+            st.rerun()
+
+
+def render_quick_stats(user_id: str):
+    """
+    Render quick statistics cards
+    
+    Args:
+        user_id: User ID
+    """
+    st.markdown("### 📊 Today's Overview")
+    
+    # Fetch today's data
+    activity = fetch_user_activity(user_id, days=1)
+    
+    if activity:
+        stats = activity.get('statistics', {})
+        
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("📸 Detect Emotion"):
-                st.session_state.show_camera = True
+            sessions = stats.get('total_sessions', 0)
+            st.metric(
+                "Sessions Today",
+                sessions,
+                delta=None,
+                help="Emotion detection sessions"
+            )
         
         with col2:
-            if st.button("📈 View History"):
-                st.session_state.show_history = True
+            detections = stats.get('total_detections', 0)
+            st.metric(
+                "Detections",
+                detections,
+                help="Total emotion detections"
+            )
         
         with col3:
-            if st.button("💡 Get Recommendation"):
-                st.session_state.show_recommendation = True
+            avg_stress = stats.get('avg_stress', 0)
+            stress_change = stats.get('stress_change', 0)
+            
+            st.metric(
+                "Avg Stress",
+                f"{avg_stress:.1f}/10",
+                delta=f"{stress_change:+.1f}",
+                delta_color="inverse",
+                help="Average stress level"
+            )
         
         with col4:
-            if st.button("📊 Analytics"):
-                st.session_state.show_analytics = True
-    
-    # Show camera if requested
-    if st.session_state.get('show_camera', False):
-        show_emotion_detection()
-    
-    # Show history if requested
-    if st.session_state.get('show_history', False):
-        show_emotion_history()
-    
-    # Show recommendation if requested
-    if st.session_state.get('show_recommendation', False):
-        show_recommendations()
-    
-    # Show analytics if requested
-    if st.session_state.get('show_analytics', False):
-        show_analytics()
-    
-    # Default dashboard view
-    if not any([st.session_state.get(x, False) for x in ['show_camera', 'show_history', 'show_recommendation', 'show_analytics']]):
-        show_dashboard_overview()
+            wellness = stats.get('wellness_score', 0)
+            st.metric(
+                "Wellness Score",
+                f"{wellness}/100",
+                help="Overall wellness indicator"
+            )
+    else:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Sessions Today", "0")
+        with col2:
+            st.metric("Detections", "0")
+        with col3:
+            st.metric("Avg Stress", "N/A")
+        with col4:
+            st.metric("Wellness Score", "N/A")
 
 
-def show_dashboard_overview():
-    """Show dashboard overview"""
-    # Get current emotion and stress
-    current_emotion = session_manager.get_current_emotion()
-    current_stress = session_manager.get_stress_score()
+def render_current_status(user_id: str):
+    """
+    Render current emotional and stress status
     
-    # Metrics row
-    col1, col2, col3, col4 = st.columns(4)
+    Args:
+        user_id: User ID
+    """
+    st.markdown("### 🎭 Current Status")
+    
+    col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.metric(
-            label="Current Emotion",
-            value=current_emotion or "Not detected",
-            delta=None
-        )
+        # Latest emotion and stress
+        activity = fetch_user_activity(user_id, days=1)
+        
+        if activity and activity.get('latest_entry'):
+            latest = activity['latest_entry']
+            emotion = latest.get('dominant_emotion', 'Unknown')
+            stress = latest.get('stress_score', 0)
+            timestamp = latest.get('timestamp', '')
+            
+            # Emotion emoji
+            emotion_emojis = {
+                'Happy': '😊',
+                'Sad': '😢',
+                'Angry': '😠',
+                'Fear': '😰',
+                'Surprise': '😲',
+                'Disgust': '🤢',
+                'Neutral': '😐'
+            }
+            
+            emoji = emotion_emojis.get(emotion, '😐')
+            
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px;">
+                <div style="font-size: 60px;">{emoji}</div>
+                <h3>{emotion}</h3>
+                <p style="color: #666;">Last detected</p>
+                <small>{timestamp[:16] if timestamp else 'N/A'}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Display stress gauge
+            st.plotly_chart(
+                create_stress_gauge(stress),
+                use_container_width=True,
+                key="current_stress_gauge"
+            )
+        else:
+            st.info("ℹ️ No recent detection data available. Start a session to see your status!")
     
     with col2:
-        st.metric(
-            label="Stress Score",
-            value=f"{current_stress}/10",
-            delta=None
+        # Quick check-in
+        st.markdown("#### ✍️ Quick Check-in")
+        render_quick_check_in_form(user_id)
+
+
+def render_emotion_summary(user_id: str, days: int = 7):
+    """
+    Render emotion distribution summary
+    
+    Args:
+        user_id: User ID
+        days: Number of days
+    """
+    st.markdown(f"### 😊 Emotion Summary (Last {days} Days)")
+    
+    activity = fetch_user_activity(user_id, days=days)
+    
+    if activity and activity.get('emotion_distribution'):
+        emotion_dist = activity['emotion_distribution']
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            # Pie chart
+            st.plotly_chart(
+                create_emotion_pie_chart(emotion_dist),
+                use_container_width=True,
+                key="emotion_pie"
+            )
+        
+        with col2:
+            # Emotion breakdown
+            st.markdown("#### Breakdown")
+            
+            total = sum(emotion_dist.values())
+            
+            for emotion, count in sorted(emotion_dist.items(), key=lambda x: x[1], reverse=True):
+                percentage = (count / total * 100) if total > 0 else 0
+                st.progress(percentage / 100)
+                st.caption(f"{emotion}: {count} ({percentage:.1f}%)")
+    else:
+        st.info("ℹ️ No emotion data available for this period")
+
+
+def render_stress_analysis(user_id: str, days: int = 7):
+    """
+    Render stress trend analysis
+    
+    Args:
+        user_id: User ID
+        days: Number of days
+    """
+    st.markdown(f"### 📈 Stress Analysis (Last {days} Days)")
+    
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/stress/history/{user_id}",
+            params={"limit": 50, "include_analytics": True},
+            timeout=10
         )
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            if result.get("success"):
+                history = result.get('history', [])
+                analytics = result.get('analytics', {})
+                
+                if history:
+                    # Stress trend chart
+                    st.plotly_chart(
+                        create_stress_trend_chart(history, 'timestamp', 'stress_score'),
+                        use_container_width=True,
+                        key="stress_trend"
+                    )
+                    
+                    # Analytics
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Average", f"{analytics.get('average', 0):.1f}/10")
+                    
+                    with col2:
+                        st.metric("Maximum", f"{analytics.get('max', 0)}/10")
+                    
+                    with col3:
+                        st.metric("Minimum", f"{analytics.get('min', 0)}/10")
+                    
+                    with col4:
+                        high_count = analytics.get('high_stress_count', 0)
+                        st.metric("High Stress Events", high_count)
+                else:
+                    st.info("ℹ️ No stress history available")
+            else:
+                st.error(f"❌ {result.get('error')}")
+        else:
+            st.error(f"❌ API error: {response.status_code}")
+            
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Connection error: {e}")
+
+
+def render_recommendations_section(user_id: str):
+    """
+    Render task recommendations section
+    
+    Args:
+        user_id: User ID
+    """
+    st.markdown("### 💡 Recommended Tasks")
+    
+    # Get latest emotion
+    activity = fetch_user_activity(user_id, days=1)
+    
+    if activity and activity.get('latest_entry'):
+        emotion = activity['latest_entry'].get('dominant_emotion', 'Neutral')
+        
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/recommend/multiple/{emotion}",
+                params={"count": 3},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                if result.get("success"):
+                    suggestions = result.get('suggestions', [])
+                    
+                    for suggestion in suggestions:
+                        task = suggestion.get('task', '')
+                        category = suggestion.get('category', '')
+                        priority = suggestion.get('priority', 'Medium')
+                        
+                        # Priority color
+                        priority_colors = {
+                            'Critical': '🔴',
+                            'High': '🟠',
+                            'Medium': '🟡',
+                            'Low': '🟢'
+                        }
+                        
+                        priority_icon = priority_colors.get(priority, '🟡')
+                        
+                        with st.expander(f"{priority_icon} {task}", expanded=False):
+                            st.markdown(f"**Category:** {category}")
+                            st.markdown(f"**Priority:** {priority}")
+                            
+                            if suggestion.get('description'):
+                                st.info(suggestion['description'])
+                            
+                            if st.button("✅ Mark as Done", key=f"done_{task}"):
+                                st.success("Task marked as complete!")
+                else:
+                    st.info("ℹ️ No recommendations available")
+        except:
+            st.info("ℹ️ Could not fetch recommendations")
+    else:
+        st.info("ℹ️ Start a detection session to get personalized recommendations")
+
+
+def render_quick_actions():
+    """Render quick action buttons"""
+    st.markdown("### ⚡ Quick Actions")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🎥 Start Detection", use_container_width=True, type="primary"):
+            st.session_state.page = "detection"
+            st.rerun()
+    
+    with col2:
+        if st.button("📊 View Analytics", use_container_width=True):
+            st.session_state.page = "analytics"
+            st.rerun()
     
     with col3:
-        if st.button("📸 New Detection"):
-            st.session_state.show_camera = True
+        if st.button("📈 Full Report", use_container_width=True):
+            st.session_state.page = "reports"
             st.rerun()
-    
-    with col4:
-        if st.button("💡 Get Recommendation"):
-            if current_emotion:
-                st.session_state.show_recommendation = True
-            else:
-                st.warning("Please detect your emotion first")
-            st.rerun()
-    
-    st.markdown("---")
-    
-    # Recent activity
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.subheader("📈 Recent Emotions")
-        # Placeholder for chart
-        st.info("Start an emotion detection session to see your emotional trends")
-    
-    with col2:
-        st.subheader("💡 Quick Tips")
-        st.info("""
-        - Take regular breaks to maintain emotional well-being
-        - Stay hydrated and get enough sleep
-        - Practice mindfulness exercises
-        """)
 
 
-def show_emotion_detection():
-    """Show emotion detection interface"""
-    st.markdown("---")
-    st.subheader("📸 Emotion Detection")
+def main():
+    """Main employee dashboard page"""
+    st.set_page_config(
+        page_title="Employee Dashboard - Amdox",
+        page_icon="🏠",
+        layout="wide"
+    )
     
-    # Camera input
-    img, captured = emotion_camera_input()
-    
-    if captured:
-        st.success("Image captured! Analyzing emotion...")
-        
-        # Process image (in a real app, this would call the API)
-        # For demo, simulate detection
-        import random
-        emotions = ['Happy', 'Neutral', 'Sad', 'Angry', 'Fear', 'Surprise', 'Disgust']
-        detected_emotion = random.choice(emotions)
-        confidence = random.uniform(0.7, 0.99)
-        
-        # Update session
-        session_manager.set_current_emotion(detected_emotion)
-        
-        # Calculate stress score
-        stress_mapping = {'Happy': 1, 'Neutral': 4, 'Sad': 6, 'Angry': 8, 'Fear': 7, 'Disgust': 8}
-        stress_score = stress_mapping.get(detected_emotion, 5)
-        session_manager.set_stress_score(stress_score)
-        
-        # Display result
-        st.success(f"Detected: {detected_emotion} (Confidence: {confidence:.2%})")
-        st.progress(int(confidence * 100))
-        
-        # Ask for stress self-assessment
-        st.markdown("### Self-Assessment")
-        user_stress = st.slider("Rate your current stress level (1-10)", 1, 10, stress_score)
-        
-        if st.button("💡 Get Recommendation Based on This"):
-            st.session_state.show_recommendation = True
-            st.rerun()
-    
-    if st.button("Back to Dashboard"):
-        st.session_state.show_camera = False
-        st.rerun()
-
-
-def show_emotion_history():
-    """Show emotion history"""
-    st.markdown("---")
-    st.subheader("📈 Emotion History")
-    
-    # Placeholder for history data
-    st.info("Your emotion detection history will appear here")
-    
-    # In a real app, this would fetch from the API
-    # try:
-    #     response = requests.get(f"{API_BASE_URL}/stress/history/{session_manager.get_user_id()}")
-    #     if response.status_code == 200:
-    #         data = response.json()
-    #         # Display history
-    # except Exception as e:
-    #     st.error(f"Error fetching history: {e}")
-    
-    if st.button("Back to Dashboard"):
-        st.session_state.show_history = False
-        st.rerun()
-
-
-def show_recommendations():
-    """Show recommendations based on emotion"""
-    st.markdown("---")
-    st.subheader("💡 Personalized Recommendations")
-    
-    current_emotion = session_manager.get_current_emotion()
-    
-    if not current_emotion:
-        st.warning("No emotion detected yet. Please detect your emotion first.")
-        if st.button("Go to Emotion Detection"):
-            st.session_state.show_camera = True
-            st.session_state.show_recommendation = False
+    # Check if user is logged in
+    if 'user_id' not in st.session_state:
+        st.warning("⚠️ Please log in first")
+        if st.button("🔐 Go to Login"):
+            st.session_state.page = "login"
             st.rerun()
         return
     
-    # Get recommendation (in real app, call API)
-    recommendation = {
-        "task": "Take a short break and practice deep breathing",
-        "category": "Wellness",
-        "priority": "Medium",
-        "duration": "10-15 minutes"
-    }
+    user_id = st.session_state.get('user_id', 'Unknown')
+    user_name = st.session_state.get('user_name', 'Employee')
     
-    display_recommendation_card(recommendation)
+    # Render navbar
+    render_navbar(user_id, user_name)
     
-    # Show related recommendations
-    st.markdown("### More Suggestions")
-    suggestions = [
-        "Practice the 4-7-8 breathing technique",
-        "Take a brief walk outside",
-        "Listen to calming music",
-        "Do a quick meditation session"
-    ]
+    # Sidebar navigation
+    selected_page = render_sidebar_navigation()
     
-    for i, suggestion in enumerate(suggestions):
-        st.write(f"{i+1}. {suggestion}")
-    
-    if st.button("Back to Dashboard"):
-        st.session_state.show_recommendation = False
+    if selected_page != "dashboard":
+        st.session_state.page = selected_page
         st.rerun()
-
-
-def show_analytics():
-    """Show analytics dashboard"""
-    st.markdown("---")
-    st.subheader("📊 Analytics Dashboard")
     
-    # Placeholder for analytics
-    col1, col2 = st.columns(2)
+    # Page header
+    render_page_header(
+        "Employee Dashboard",
+        "Your personal wellness and productivity hub",
+        "🏠"
+    )
+    
+    # Welcome section
+    render_welcome_section(user_name)
+    
+    st.markdown("---")
+    
+    # Quick stats
+    render_quick_stats(user_id)
+    
+    st.markdown("---")
+    
+    # Current status
+    render_current_status(user_id)
+    
+    st.markdown("---")
+    
+    # Two-column layout
+    col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.markdown("### Emotion Distribution")
-        st.info("Analytics data will appear here after multiple detections")
+        render_emotion_summary(user_id, days=7)
     
     with col2:
-        st.markdown("### Stress Trends")
-        st.info("Track your stress over time")
+        render_stress_analysis(user_id, days=7)
     
-    if st.button("Back to Dashboard"):
-        st.session_state.show_analytics = False
-        st.rerun()
+    st.markdown("---")
+    
+    # Recommendations
+    render_recommendations_section(user_id)
+    
+    st.markdown("---")
+    
+    # Quick actions
+    render_quick_actions()
 
 
 if __name__ == "__main__":
-    employee_dashboard()
-
+    main()
