@@ -419,7 +419,7 @@ class DatabaseManager:
         """
         try:
             collection = self.get_collection(collection_name)
-            if not collection:
+            if collection is None:
                 return
             
             created_count = 0
@@ -461,7 +461,7 @@ class DatabaseManager:
             bool: True if successful, False otherwise
         """
         try:
-            if self.db:
+            if self.db is not None:
                 self.db.drop_collection(collection_name)
                 logger.info(f"🗑️ Dropped collection: {collection_name}")
                 return True
@@ -478,7 +478,7 @@ class DatabaseManager:
             list: List of collection names
         """
         try:
-            if self.db:
+            if self.db is not None:
                 return self.db.list_collection_names()
             return []
         except Exception as e:
@@ -496,7 +496,7 @@ class DatabaseManager:
             dict: Collection statistics
         """
         try:
-            if self.db:
+            if self.db is not None:
                 stats = self.db.command("collStats", collection_name)
                 return {
                     "count": stats.get("count", 0),
@@ -532,7 +532,7 @@ class DatabaseManager:
                 backup_name = f"{collection_name}_backup_{timestamp}"
             
             collection = self.get_collection(collection_name)
-            if not collection:
+            if collection is None:
                 return False
             
             # Copy all documents to backup collection
@@ -571,7 +571,7 @@ class DatabaseManager:
             cutoff_date = datetime.utcnow() - timedelta(days=days)
             collection = self.get_collection(collection_name)
             
-            if not collection:
+            if collection is None:
                 return 0
             
             result = collection.delete_many({
@@ -595,7 +595,7 @@ class DatabaseManager:
             dict: Database size information
         """
         try:
-            if self.db:
+            if self.db is not None:
                 stats = self.db.command("dbStats", scale=1024*1024)  # MB
                 return {
                     "data_size_mb": round(stats.get("dataSize", 0), 2),

@@ -95,7 +95,7 @@ class RecommendationRequest(BaseModel):
 class AlertCreate(BaseModel):
     user_id: str
     alert_type: str
-    severity: str = Field(..., regex="^(low|medium|high|critical)$")
+    severity: str = Field(..., pattern="^(low|medium|high|critical)$")
     message: str
     metadata: Optional[Dict[str, Any]] = None
 
@@ -109,7 +109,7 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: Optional[str] = None
-    role: str = Field("employee", regex="^(employee|manager|hr|admin)$")
+    role: str = Field("employee", pattern="^(employee|manager|hr|admin)$")
     team_id: Optional[str] = None
 
 class TeamCreate(BaseModel):
@@ -382,7 +382,7 @@ async def get_stress_history(
 async def get_stress_trend(
     user_id: str,
     days: int = Query(7, ge=1, le=90),
-    granularity: str = Query("daily", regex="^(hourly|daily|weekly)$")
+    granularity: str = Query("daily", pattern="^(hourly|daily|weekly)$")
 ):
     """Get stress trend analysis"""
     try:

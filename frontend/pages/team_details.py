@@ -1,156 +1,125 @@
 """
-Team Details Page - View individual team analytics
+Team Details Page for Amdox
+Detailed team analytics and member management
 """
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime, timedelta
-
-# Add parent directories to path
+import requests
 import sys
 import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-pages_dir = os.path.dirname(current_dir)
-components_dir = os.path.dirname(pages_dir)
-app_dir = os.path.dirname(components_dir)
-root_dir = os.path.dirname(app_dir)
 
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'components'))
 
-from frontend.session import session_manager
+from navbar import render_navbar, render_sidebar_navigation, render_page_header
+from components.charts import create_emotion_pie_chart, create_stress_trend_chart
+
+API_BASE_URL = "http://localhost:8080"
 
 
-def team_details():
-    """Display team details page"""
-    st.set_page_config(
-        page_title="Team Details - Amdox",
-        page_icon="👥",
-        layout="wide"
-    )
+def get_team_list():
+    """Fetch list of all teams"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/teams", timeout=10)
+        if response.status_code == 200:
+            return response.json().get('teams', [])
+    except:
+        return []
+
+
+def get_team_analytics(team_id: str, days: int = 30):
+    """Fetch team analytics"""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/analytics/team/{team_id}",
+            params={"days": days},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+    except:
+        return {}
+
+
+def render_team_details():
+    """Main team details page"""
     
-    # Check authentication
-    if not session_manager.is_logged_in():
-        st.warning("Please log in to view team details")
-        st.switch_page("frontend.pages.login")
+    if 'user_id' not in st.session_state:
+        st.warning("⚠️ Please login first")
         return
     
-    st.title("👥 Team Details")
+    user_id = st.session_state.get('user_id')
+    user_name = st.session_state.get('user_name', 'User')
+    
+    render_navbar(user_id, user_name)
+    selected_page = render_sidebar_navigation()
+    
+    if selected_page != "team":
+        st.session_state.page = selected_page
+        st.rerun()
+    
+    render_page_header("Team Details", "Team analytics and management", "👥")
     
     # Team selector
-    col1, col2 = st.columns([2, 1])
+    teams = get_team_list()
     
-    with col1:
-        team_id = st.selectbox(
-            "Select Team",
-            ["Engineering", "Marketing", "Sales", "HR", "Finance", "Product"]
-        )
+    if not teams:
+        st.warning("No teams found")
+        return
     
-    with col2:
-        if st.button("🔄 Refresh"):
-            st.rerun()
+    team_names = {t['team_id']: t['name'] for t in teams}
+    selected_team = st.selectbox(
+        "Select Team",
+        options=list(team_names.keys()),
+        format_func=lambda x: team_names[x]
+    )
     
-    st.markdown("---")
-    
-    # Team metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Team Members", "45")
-    
-    with col2:
-        st.metric("Avg Stress", "4.5/10")
-    
-    with col3:
-        st.metric("Happy %", "62%")
-    
-    with col4:
-        st.metric("Active Alerts", "2")
-    
-    st.markdown("---")
-    
-    # Team members table
-    st.subheader("👤 Team Members")
-    
-    # Sample member data
-    members_data = [
-        {"Name": "John Doe", "Role": "Engineer", "Avg Stress": 4.2, "Happy %": 65, "Last Active": "Today"},
-        {"Name": "Jane Smith", "Role": "Senior Engineer", "Avg Stress": 3.8, "Happy %": 72, "Last Active": "Today"},
-        {"Name": "Mike Johnson", "Role": "Engineer", "Avg Stress": 5.1, "Happy %": 58, "Last Active": "Yesterday"},
-        {"Name": "Sarah Williams", "Role": "Tech Lead", "Avg Stress": 4.5, "Happy %": 68, "Last Active": "Today"},
-        {"Name": "Chris Brown", "Role": "Engineer", "Avg Stress": 3.9, "Happy %": 70, "Last Active": "Today"},
-    ]
-    
-    df = pd.DataFrame(members_data)
-    st.dataframe(df, use_container_width=True)
-    
-    # Charts
-    st.markdown("---")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("🎭 Team Emotion Distribution")
-        emotion_data = {
-            'Emotion': ['Happy', 'Neutral', 'Sad', 'Angry', 'Fear'],
-            'Percentage': [35, 30, 15, 12, 8]
-        }
-        df_emotions = pd.DataFrame(emotion_data)
-        fig = px.pie(
-            df_emotions,
-            values='Percentage',
-            names='Emotion',
-            title='Team Emotion Distribution'
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        st.subheader("📈 Stress Trend (Last 7 Days)")
-        stress_data = {
-            'Day': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-            'Avg Stress': [4.2, 4.5, 4.3, 4.8, 4.4, 4.0, 3.8]
-        }
-        df_stress = pd.DataFrame(stress_data)
-        fig = px.line(
-            df_stress,
-            x='Day',
-            y='Avg Stress',
-            markers=True
-        )
-        fig.add_hline(y=5, line_dash="dash", line_color="orange")
-        fig.add_hline(y=7, line_dash="dash", line_color="red")
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Alerts section
-    st.markdown("---")
-    st.subheader("⚠️ Team Alerts")
-    
-    alerts = [
-        {"Date": "2024-01-15", "Member": "Mike Johnson", "Type": "High Stress", "Status": "Under Review"},
-        {"Date": "2024-01-14", "Member": "Sarah Williams", "Type": "Decreased Engagement", "Status": "Resolved"},
-    ]
-    
-    st.table(alerts)
-    
-    # Actions
-    st.markdown("---")
-    st.subheader("💡 Team Lead Actions")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📧 Send Wellness Tips"):
-            st.success("Wellness tips sent to team!")
-    
-    with col2:
-        if st.button("📊 Generate Report"):
-            st.success("Report generation started!")
-    
-    with col3:
-        if st.button("👥 Schedule Team Check-in"):
-            st.success("Check-in meeting scheduled!")
+    if selected_team:
+        st.markdown("---")
+        
+        # Fetch team analytics
+        analytics = get_team_analytics(selected_team, days=30)
+        
+        if analytics.get('success'):
+            overview = analytics.get('overview', {})
+            
+            # Team stats
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Members", overview.get('member_count', 0))
+            
+            with col2:
+                avg_stress = overview.get('overall_avg_stress', 0)
+                st.metric("Avg Stress", f"{avg_stress:.1f}/10")
+            
+            with col3:
+                dominant = overview.get('dominant_emotion', 'Unknown')
+                st.metric("Team Mood", dominant)
+            
+            with col4:
+                high_stress = overview.get('high_stress_members', 0)
+                st.metric("At Risk", high_stress)
+            
+            st.markdown("---")
+            
+            # Charts
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                emotion_dist = analytics.get('emotion_analysis', {})
+                if emotion_dist:
+                    st.plotly_chart(
+                        create_emotion_pie_chart(emotion_dist),
+                        use_container_width=True
+                    )
+            
+            with col2:
+                st.markdown("### 📊 Team Members")
+                members = analytics.get('members', [])
+                
+                for member in members[:10]:
+                    st.write(f"👤 {member.get('user_id')} - Stress: {member.get('avg_stress', 0):.1f}/10")
 
 
 if __name__ == "__main__":
-    team_details()
-
+    st.set_page_config(page_title="Team Details - Amdox", page_icon="👥", layout="wide")
+    render_team_details()

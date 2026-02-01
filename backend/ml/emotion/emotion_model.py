@@ -66,7 +66,7 @@ class EmotionModel:
             
             # Determine model path
             if self.model_path is None:
-                base_dir = Path(__file__).resolve().parent.parent.parent
+                base_dir = Path(__file__).resolve().parent.parent.parent.parent
                 self.model_path = str(base_dir / "models" / "fer2013_mini_XCEPTION.102-0.66.hdf5")
             
             # Check if model file exists

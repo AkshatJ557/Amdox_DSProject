@@ -12,13 +12,13 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'components'))
 
 from navbar import render_navbar, render_sidebar_navigation, render_page_header
-from charts import (
-    create_emotion_pie_chart,
-    create_stress_trend_chart,
+from components.charts import (
     create_stress_gauge,
-    render_dashboard_metrics
+    create_emotion_pie_chart,
+    create_stress_trend_chart
 )
-from forms import render_quick_check_in_form
+from components.forms import render_quick_check_in_form
+
 
 # API Configuration
 API_BASE_URL = "http://localhost:8080"
@@ -457,6 +457,59 @@ def main():
     # Quick actions
     render_quick_actions()
 
+def render_employee_dashboard():
+    """Main entry point for employee dashboard"""
+    
+    # Check if user is logged in
+    if 'user_id' not in st.session_state:
+        st.warning("⚠️ Please login first")
+        if st.button("🔐 Go to Login"):
+            st.session_state.page = "login"
+            st.rerun()
+        return
+    
+    user_id = st.session_state.get('user_id')
+    user_name = st.session_state.get('user_name', 'Employee')
+    
+    # Page content
+    st.title(f"👋 Welcome, {user_name}!")
+    
+    st.markdown("## 🏠 Employee Dashboard")
+    
+    # Quick stats
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Sessions Today", "0")
+    with col2:
+        st.metric("Avg Stress", "N/A")
+    with col3:
+        st.metric("Wellness Score", "N/A")
+    with col4:
+        st.metric("Current Mood", "😐")
+    
+    st.markdown("---")
+    
+    st.info("📊 Dashboard features will appear here once backend is connected")
+    
+    # Quick actions
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🎥 Start Detection", use_container_width=True):
+            st.session_state.page = "employee_session"
+            st.rerun()
+    
+    with col2:
+        if st.button("📊 View History", use_container_width=True):
+            st.session_state.page = "employee_history"
+            st.rerun()
+    
+    with col3:
+        if st.button("💡 Get Tips", use_container_width=True):
+            st.info("💡 Take regular breaks and stay hydrated!")
+
 
 if __name__ == "__main__":
-    main()
+    render_employee_dashboard()
+

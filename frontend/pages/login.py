@@ -1,125 +1,228 @@
 """
-Login page for Amdox
+Login Page for Amdox
+User authentication and session initialization
 """
 import streamlit as st
 import requests
-import os
+from datetime import datetime
 
-# Add parent directories to path
-import sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
-pages_dir = os.path.dirname(current_dir)
-components_dir = os.path.dirname(pages_dir)
-app_dir = os.path.dirname(components_dir)
-root_dir = os.path.dirname(app_dir)
-
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
-if app_dir not in sys.path:
-    sys.path.insert(0, app_dir)
-
-from frontend.session import session_manager, API_BASE_URL
+# API Configuration
+API_BASE_URL = "http://localhost:8080"
 
 
-def login_page():
-    """Display login page"""
-    st.set_page_config(page_title="Login - Amdox", page_icon="🔐")
-    
-    # Check if already logged in
-    if session_manager.is_logged_in():
-        st.success("You are already logged in!")
-        if st.button("Go to Dashboard"):
-            st.switch_page("frontend.pages.employee_dashboard")
-        if st.button("Logout"):
-            session_manager.logout()
-            st.rerun()
-        return
-    
-    st.title("🔐 Amdox Login")
-    st.markdown("Enter your credentials to access the emotion detection system")
-    
-    # Login form
-    with st.form("login_form"):
-        username = st.text_input("Username", placeholder="Enter your username")
-        password = st.text_input("Password", type="password", placeholder="Enter your password")
-        
-        submit_button = st.form_submit_button("Login")
-        
-        if submit_button:
-            if username and password:
-                # Attempt login (in a real app, this would validate credentials)
-                success, result = authenticate_user(username, password)
-                
-                if success:
-                    session_manager.login(username)
-                    st.success("Login successful!")
-                    st.rerun()
-                else:
-                    st.error(f"Login failed: {result}")
-            else:
-                st.warning("Please enter both username and password")
-    
-    # Demo mode option
-    st.markdown("---")
-    st.subheader("Demo Mode")
-    st.info("Want to explore without logging in?")
-    
-    if st.button("Continue as Guest"):
-        session_manager.login("guest_user")
-        st.success("Guest mode activated!")
-        st.rerun()
-    
-    # Check backend connection
-    st.markdown("---")
-    st.subheader("System Status")
-    
-    if st.button("Check API Connection"):
-        check_api_connection()
-
-
-def authenticate_user(username: str, password: str) -> tuple:
+def authenticate_user(user_id: str, password: str = None):
     """
-    Authenticate user with backend API
+    Authenticate user via API
     
     Args:
-        username: Username
-        password: Password
+        user_id: User ID
+        password: Password (optional)
     
     Returns:
-        tuple: (success, message)
+        dict: User data or None
     """
     try:
-        # In a real app, this would call the authentication API
-        # For demo purposes, accept any non-empty credentials
-        if len(username) >= 3 and len(password) >= 6:
-            return True, "Authentication successful"
-        else:
-            return False, "Invalid credentials"
-            
-    except Exception as e:
-        return False, f"Authentication error: {str(e)}"
-
-
-def check_api_connection():
-    """Check if backend API is reachable"""
-    try:
-        health_url = f"{API_BASE_URL}/health"
-        response = requests.get(health_url, timeout=5)
+        # For demo, we'll use a simple user fetch
+        # In production, use proper authentication endpoint
+        response = requests.get(
+            f"{API_BASE_URL}/users/{user_id}",
+            timeout=10
+        )
         
         if response.status_code == 200:
-            data = response.json()
-            st.success(f"✅ API Connected: {data.get('status', 'unknown')}")
-            st.json(data)
+            return response.json()
         else:
-            st.error(f"❌ API returned status code: {response.status_code}")
+            return None
+    except:
+        return None
+
+
+def initialize_session(user_data: dict):
+    """
+    Initialize user session
+    
+    Args:
+        user_data: User information
+    """
+    st.session_state.logged_in = True
+    st.session_state.user_id = user_data.get('user_id')
+    st.session_state.user_name = user_data.get('name', 'User')
+    st.session_state.user_email = user_data.get('email', '')
+    st.session_state.user_role = user_data.get('role', 'employee')
+    st.session_state.login_time = datetime.now()
+    
+    # Set default page based on role
+    if st.session_state.user_role in ['hr', 'admin']:
+        st.session_state.page = "hr_dashboard"
+    else:
+        st.session_state.page = "employee_dashboard"
+
+
+def render_login_form():
+    """Render login form"""
+    
+    # Logo/Header
+    st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h1 style="color: #667eea; font-size: 48px;">🎯 Amdox</h1>
+            <p style="color: #666; font-size: 18px;">AI-Powered Employee Wellness System</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Login form
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("### 🔐 Login")
+        
+        with st.form("login_form"):
+            user_id = st.text_input(
+                "User ID",
+                placeholder="Enter your user ID (e.g., EMP001)",
+                help="Your unique employee identifier"
+            )
             
-    except requests.exceptions.ConnectionError:
-        st.error("❌ Could not connect to API. Make sure the backend server is running.")
-        st.info("💡 Start the backend with: python run.py")
-    except Exception as e:
-        st.error(f"❌ Error connecting to API: {str(e)}")
+            password = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Enter password (optional for demo)"
+            )
+            
+            remember_me = st.checkbox("Remember me")
+            
+            submitted = st.form_submit_button("🚀 Login", use_container_width=True)
+            
+            if submitted:
+                if not user_id:
+                    st.error("❌ Please enter your User ID")
+                else:
+                    with st.spinner("Authenticating..."):
+                        user_data = authenticate_user(user_id, password)
+                        
+                        if user_data:
+                            initialize_session(user_data)
+                            st.success("✅ Login successful!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("❌ Invalid credentials. Please try again.")
+
+
+def render_demo_accounts():
+    """Render demo account information"""
+    
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        with st.expander("🎭 Demo Accounts", expanded=False):
+            st.markdown("""
+            **Employee Account:**
+            - User ID: `EMP001`
+            - Password: `demo123`
+            
+            **Manager Account:**
+            - User ID: `MGR001`
+            - Password: `demo123`
+            
+            **HR Account:**
+            - User ID: `HR001`
+            - Password: `admin123`
+            
+            **Admin Account:**
+            - User ID: `ADMIN001`
+            - Password: `admin123`
+            """)
+
+
+def render_quick_login():
+    """Render quick login buttons"""
+    
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("### ⚡ Quick Login (Demo)")
+        
+        col_emp, col_hr = st.columns(2)
+        
+        with col_emp:
+            if st.button("👤 Employee Demo", use_container_width=True):
+                user_data = {
+                    'user_id': 'EMP001',
+                    'name': 'John Doe',
+                    'email': 'john@company.com',
+                    'role': 'employee'
+                }
+                initialize_session(user_data)
+                st.rerun()
+        
+        with col_hr:
+            if st.button("👔 HR Demo", use_container_width=True):
+                user_data = {
+                    'user_id': 'HR001',
+                    'name': 'Jane Smith',
+                    'email': 'jane@company.com',
+                    'role': 'hr'
+                }
+                initialize_session(user_data)
+                st.rerun()
+
+
+def render_login():
+    """Main login page"""
+    
+    # Check if already logged in
+    if st.session_state.get('logged_in'):
+        st.success("✅ You are already logged in!")
+        
+        user_name = st.session_state.get('user_name', 'User')
+        st.info(f"👤 Logged in as: **{user_name}**")
+        
+        if st.button("🏠 Go to Dashboard"):
+            page = st.session_state.get('page', 'employee_dashboard')
+            st.session_state.page = page
+            st.rerun()
+        
+        if st.button("🚪 Logout"):
+            # Clear session
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+        
+        return
+    
+    # Render login form
+    render_login_form()
+    
+    # Demo accounts info
+    render_demo_accounts()
+    
+    # Quick login
+    render_quick_login()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+        <div style="text-align: center; color: #666;">
+            <p>© 2026 Amdox Team | Version 1.0.0</p>
+            <p>Need help? Contact: support@amdox.com</p>
+        </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
-    login_page()
-
+    st.set_page_config(
+        page_title="Login - Amdox",
+        page_icon="🔐",
+        layout="centered"
+    )
+    
+    # Import time for delay
+    import time
+    
+    render_login()

@@ -505,7 +505,7 @@ def render_dashboard_metrics(metrics: Dict[str, Any]):
         )
 
 
-def render_team_comparison_chart(team_data: Dict[str, Dict]) -> go.Figure:
+def create_team_comparison_chart(team_data: Dict[str, Dict]) -> go.Figure:
     """
     Create team comparison bar chart
     
@@ -545,7 +545,6 @@ def render_team_comparison_chart(team_data: Dict[str, Dict]) -> go.Figure:
     )
     
     return fig
-
 
 if __name__ == "__main__":
     # For testing

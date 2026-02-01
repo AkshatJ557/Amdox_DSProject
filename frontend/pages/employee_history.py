@@ -13,11 +13,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'components'))
 
 from navbar import render_navbar, render_sidebar_navigation, render_page_header
-from charts import (
-    create_emotion_timeline,
+from components.charts import (
     create_emotion_bar_chart,
-    create_stress_trend_chart,
-    create_box_plot
+    create_stress_trend_chart
 )
 
 # API Configuration
@@ -264,6 +262,13 @@ def main():
     
     # Detailed analysis
     render_detailed_analysis(user_id, days)
+
+
+
+
+def render_employee_history():
+    """Main entry point"""
+    main()
 
 
 if __name__ == "__main__":

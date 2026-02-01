@@ -1,201 +1,146 @@
 """
-HR Dashboard - Analytics dashboard for HR managers
+HR Dashboard Page for Amdox
+Organization-wide monitoring and management
 """
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime, timedelta
-
-# Add parent directories to path
+import requests
+from datetime import datetime
 import sys
 import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-pages_dir = os.path.dirname(current_dir)
-components_dir = os.path.dirname(pages_dir)
-app_dir = os.path.dirname(components_dir)
-root_dir = os.path.dirname(app_dir)
 
-if root_dir not in sys.path:
-    sys.path.insert(0, root_dir)
-if app_dir not in sys.path:
-    sys.path.insert(0, app_dir)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'components'))
 
-from frontend.session import session_manager, API_BASE_URL
+from navbar import render_navbar, render_sidebar_navigation, render_page_header
+from components.charts import create_team_comparison_chart, create_emotion_pie_chart
+from components.forms import render_user_registration_form, render_team_creation_form
+API_BASE_URL = "http://localhost:8080"
 
 
-def hr_dashboard():
-    """Display HR dashboard"""
-    st.set_page_config(
-        page_title="HR Dashboard - Amdox",
-        page_icon="📊",
-        layout="wide"
-    )
+def check_hr_access():
+    """Check if user has HR/Admin access"""
+    role = st.session_state.get('user_role', 'employee')
+    if role not in ['hr', 'admin']:
+        st.error("❌ Unauthorized. HR or Admin access required.")
+        st.session_state.page = "employee_dashboard"
+        st.rerun()
+
+
+def render_system_overview():
+    """Render system-wide statistics"""
+    st.markdown("### 📊 System Overview")
     
-    # Check authentication (simplified for demo)
-    if not session_manager.is_logged_in():
-        st.warning("Please log in to access the HR dashboard")
-        st.switch_page("frontend.pages.login")
-        return
+    try:
+        response = requests.get(f"{API_BASE_URL}/analytics/dashboard", timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data.get('success'):
+                overview = data.get('overview', {})
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Users", overview.get('total_users', 0))
+                
+                with col2:
+                    st.metric("Active Sessions", overview.get('active_sessions', 0))
+                
+                with col3:
+                    avg_stress = overview.get('avg_stress', 0)
+                    st.metric("System Avg Stress", f"{avg_stress:.1f}/10")
+                
+                with col4:
+                    alerts = overview.get('active_alerts', 0)
+                    st.metric("Active Alerts", alerts)
+    except Exception as e:
+        st.error(f"Error loading overview: {e}")
+
+
+def render_high_risk_users():
+    """Render high-risk users table"""
+    st.markdown("### 🚨 High-Risk Employees")
     
-    st.title("📊 HR Dashboard")
-    st.markdown(f"Welcome, **{session_manager.get_user_id()}**!")
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/analytics/stress",
+            params={"days": 7},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            if result.get('success'):
+                high_risk = result.get('high_risk_users', [])
+                
+                if high_risk:
+                    for user in high_risk[:10]:
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        
+                        with col1:
+                            st.write(f"👤 {user.get('user_id')}")
+                        
+                        with col2:
+                            stress = user.get('avg_stress', 0)
+                            st.write(f"💊 {stress:.1f}/10")
+                        
+                        with col3:
+                            count = user.get('high_stress_count', 0)
+                            st.write(f"🚨 {count} events")
+                else:
+                    st.success("✅ No high-risk employees")
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+
+def render_hr_dashboard():
+    """Main HR dashboard page"""
     
-    # Sidebar filters
-    st.sidebar.title("Filters")
+    # Check access
+    check_hr_access()
     
-    # Date range
-    date_range = st.sidebar.date_input(
-        "Date Range",
-        value=(datetime.now() - timedelta(days=30), datetime.now()),
-        help="Select date range for analytics"
-    )
+    user_id = st.session_state.get('user_id')
+    user_name = st.session_state.get('user_name', 'HR')
     
-    # Team filter
-    team_filter = st.sidebar.selectbox(
-        "Team",
-        ["All Teams", "Engineering", "Marketing", "Sales", "HR"]
-    )
+    render_navbar(user_id, user_name)
+    selected_page = render_sidebar_navigation()
     
-    # Refresh data button
-    if st.sidebar.button("🔄 Refresh Data"):
+    if selected_page != "dashboard":
+        st.session_state.page = selected_page
         st.rerun()
     
-    # Main dashboard content
-    st.markdown("---")
+    render_page_header("HR Dashboard", "Organization-wide monitoring", "👔")
     
-    # Key metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            label="Total Employees",
-            value="156",
-            delta="+5 this month"
-        )
-    
-    with col2:
-        st.metric(
-            label="Avg Team Stress",
-            value="4.2/10",
-            delta="-0.3",
-            delta_color="inverse"
-        )
-    
-    with col3:
-        st.metric(
-            label="Happy Employees",
-            value="68%",
-            delta="+5%"
-        )
-    
-    with col4:
-        st.metric(
-            label="Active Alerts",
-            value="3",
-            delta="-2",
-            delta_color="inverse"
-        )
+    # System overview
+    render_system_overview()
     
     st.markdown("---")
     
-    # Charts section
-    col1, col2 = st.columns(2)
+    # Tabs for different sections
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🚨 Alerts",
+        "👥 Users",
+        "🏢 Teams",
+        "📊 Analytics"
+    ])
     
-    with col1:
-        st.subheader("🎭 Team Emotion Distribution")
-        
-        # Sample data
-        emotion_data = {
-            'Emotion': ['Happy', 'Neutral', 'Sad', 'Angry', 'Fear'],
-            'Count': [45, 38, 28, 25, 20]
-        }
-        
-        df = pd.DataFrame(emotion_data)
-        
-        fig = px.pie(
-            df, 
-            values='Count', 
-            names='Emotion',
-            title='Emotion Distribution',
-            color_discrete_sequence=px.colors.qualitative.Pastel
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    with tab1:
+        render_high_risk_users()
     
-    with col2:
-        st.subheader("📈 Stress Trends")
-        
-        # Sample data
-        stress_data = {
-            'Date': [(datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7, -1, -1)],
-            'Stress': [4.2, 4.5, 4.1, 4.8, 4.3, 4.0, 4.2, 4.1]
-        }
-        
-        df = pd.DataFrame(stress_data)
-        
-        fig = px.line(
-            df,
-            x='Date',
-            y='Stress',
-            title='Average Stress Over Time',
-            markers=True
-        )
-        fig.add_hline(y=5, line_dash="dash", line_color="orange", annotation_text="Moderate")
-        fig.add_hline(y=7, line_dash="dash", line_color="red", annotation_text="High")
-        st.plotly_chart(fig, use_container_width=True)
+    with tab2:
+        st.markdown("### 👥 User Management")
+        render_user_registration_form()
     
-    st.markdown("---")
+    with tab3:
+        st.markdown("### 🏢 Team Management")
+        render_team_creation_form()
     
-    # Team breakdown
-    st.subheader("👥 Team Breakdown")
-    
-    # Sample team data
-    team_data = pd.DataFrame({
-        'Team': ['Engineering', 'Marketing', 'Sales', 'HR', 'Finance'],
-        'Employees': [45, 28, 35, 12, 18],
-        'Avg Stress': [4.5, 3.8, 4.2, 3.5, 3.9],
-        'Happy %': [62, 75, 65, 78, 72]
-    })
-    
-    st.dataframe(team_data, use_container_width=True)
-    
-    # Alerts section
-    st.markdown("---")
-    st.subheader("⚠️ Recent Alerts")
-    
-    alerts = [
-        {"Date": "2024-01-15", "Employee": "John D.", "Type": "High Stress", "Status": "Resolved"},
-        {"Date": "2024-01-14", "Employee": "Sarah M.", "Type": "Low Engagement", "Status": "Pending"},
-        {"Date": "2024-01-13", "Employee": "Mike R.", "Type": "High Stress", "Status": "Resolved"},
-    ]
-    
-    alerts_df = pd.DataFrame(alerts)
-    st.table(alerts_df)
-    
-    # Actions section
-    st.markdown("---")
-    st.subheader("💡 Recommended Actions")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.info("""
-        ### 🧘 Wellness Program
-        Consider implementing a team wellness program to reduce stress levels.
-        """)
-    
-    with col2:
-        st.info("""
-        ### 📊 1:1 Meetings
-        Schedule check-ins with employees showing high stress patterns.
-        """)
-    
-    with col3:
-        st.info("""
-        ### 🎯 Workload Review
-        Review workload distribution for high-stress teams.
-        """)
+    with tab4:
+        st.markdown("### 📊 System Analytics")
+        st.info("Advanced analytics coming soon!")
 
 
 if __name__ == "__main__":
-    hr_dashboard()
-
+    st.set_page_config(page_title="HR Dashboard - Amdox", page_icon="👔", layout="wide")
+    render_hr_dashboard()

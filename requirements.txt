@@ -1,39 +1,172 @@
-# Core Data Science & ML
-numpy>=1.24.0
-pandas>=2.0.0
-scikit-learn>=1.3.0
+# Amdox Requirements
+# Python 3.9+
 
-# Machine Learning & AI
-tensorflow>=2.13.0
-keras>=2.13.0
-opencv-python>=4.8.0
-opencv-contrib-python>=4.8.0
+# ============================================================================
+# BACKEND DEPENDENCIES
+# ============================================================================
 
-# Frontend & Web
-streamlit>=1.28.0
-plotly>=5.17.0
-altair>=5.0.0
-streamlit-option-menu>=0.3.6
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+python-multipart==0.0.6
 
 # Database
-pymongo>=4.5.0  # For future MongoDB migration
-sqlalchemy>=2.0.0
+pymongo==4.6.1
+motor==3.3.2  # Async MongoDB driver
 
-# Utilities & Tools
-python-dotenv>=1.0.0
-pillow>=10.0.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
+# ML & Computer Vision
+tensorflow==2.15.0
+keras==2.15.0
+opencv-python==4.9.0.80
+opencv-contrib-python==4.9.0.80
+numpy==1.24.3
+scikit-learn==1.4.0
+pandas==2.1.4
+
+# Image Processing
+Pillow==10.2.0
+h5py==3.10.0  # For loading .hdf5 model files
+
+# API & HTTP
+requests==2.31.0
+httpx==0.26.0
+aiohttp==3.9.1
+
+# ============================================================================
+# FRONTEND DEPENDENCIES
+# ============================================================================
+
+# Streamlit Framework
+streamlit==1.30.0
+
+# Data Visualization
+plotly==5.18.0
+matplotlib==3.8.2
+seaborn==0.13.1
+
+# Data Processing
+pandas==2.1.4
+numpy==1.24.3
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
 
 # Date & Time
-python-dateutil>=2.8.0
+python-dateutil==2.8.2
+pytz==2023.3
 
-# Development
-pytest>=7.4.0
-black>=23.0.0
-flake8>=6.0.0
+# Logging
+loguru==0.7.2
 
-# Optional (for enhanced features)
-streamlit-camera-input-live  # Enhanced camera input
-streamlit-extras  # Additional UI components
-streamlit-authenticator  # If you want enhanced auth later
+# Environment Variables
+python-dotenv==1.0.0
+
+# Progress Bars
+tqdm==4.66.1
+
+# ============================================================================
+# DEVELOPMENT DEPENDENCIES (Optional)
+# ============================================================================
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Code Quality
+black==23.12.1
+flake8==7.0.0
+isort==5.13.2
+mypy==1.8.0
+
+# Documentation
+sphinx==7.2.6
+sphinx-rtd-theme==2.0.0
+
+# ============================================================================
+# PERFORMANCE & OPTIMIZATION
+# ============================================================================
+
+# Caching
+cachetools==5.3.2
+
+# Async Processing
+asyncio==3.4.3
+
+# JSON Handling
+ujson==5.9.0
+
+# ============================================================================
+# SECURITY
+# ============================================================================
+
+# Password Hashing
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+
+# JWT Tokens (if needed)
+PyJWT==2.8.0
+
+# ============================================================================
+# CORS & Middleware
+# ============================================================================
+
+python-cors==1.0.0
+
+# ============================================================================
+# DEPLOYMENT
+# ============================================================================
+
+# WSGI Server
+gunicorn==21.2.0
+
+# Production Logging
+python-json-logger==2.0.7
+
+# Monitoring
+prometheus-client==0.19.0
+
+# ============================================================================
+# OPTIONAL ENHANCEMENTS
+# ============================================================================
+
+# Email Notifications
+python-emaillib==0.4.8
+
+# SMS Notifications
+twilio==8.11.1
+
+# Excel Export
+openpyxl==3.1.2
+xlsxwriter==3.1.9
+
+# PDF Generation
+reportlab==4.0.9
+PyPDF2==3.0.1
+
+# Image Generation for Reports
+Pillow==10.2.0
+
+# ============================================================================
+# NOTES
+# ============================================================================
+
+# Installation:
+# pip install -r requirements.txt
+
+# For development:
+# pip install -r requirements.txt
+# pip install -e .
+
+# For production (minimal):
+# Install only core dependencies without dev tools
+
+# GPU Support (Optional - for faster ML inference):
+# tensorflow-gpu==2.15.0
+# Requires CUDA and cuDNN installation
+
+# Apple Silicon (M1/M2):
+# tensorflow-macos==2.15.0
+# tensorflow-metal==1.1.0
